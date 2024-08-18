@@ -1,0 +1,167 @@
+name: "NMS Deployment"
+description: "Deploying various nms versions to the local maven repository"
+
+inputs:
+  versions:
+    description: "The versions of the NMS to deploy, split by newline"
+    required: true
+  github-token:
+    description: "The GitHub PAT to use for referencing the NMS repository"
+    required: true
+  nms-repository:
+    description: "The repository that contains the prebuilt NMS artifacts."
+    required: true
+    default: "TeamKun/NMSBuilds"
+  deploy-path:
+    description: "The path to deploy the NMS to"
+    required: true
+    default: "~/.m2/repository"
+
+branding:
+  icon: "package"
+  color: "blue"
+
+author: "PeyaPeyaPeyang"
+
+runs:
+  using: composite
+  steps:
+    - name: Create temporary directory
+      run: mkdir -p temp
+      shell: bash
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: "20"
+    - name: Install node-fetch
+      run: npm install node-fetch
+      shell: bash
+    - name: Collect NMS artifacts
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const { pipeline } = require('stream');
+        
+          const versions = process.env.VERSIONS.split("\n")
+              .filter(version => version.trim().length > 0)
+              .map(version => "nms-" + version)
+              .map(version => version.replace(/#.*/, "").trim());
+          const token = process.env.GH_TOKEN;
+          const tempPath = "temp";
+          
+          const repository = process.env.REPOSITORY;
+          const repositoryOwner = repository.split("/")[0];
+          const repositoryName = repository.split("/")[1];
+
+          const query = `
+          query($repoOwner: String!, $repoName: String!) {
+            repository(owner: $repoOwner, name: $repoName) {
+              releases(first: 100) {
+                edges {
+                  node {
+                    tagName
+                    releaseAssets(first: 1, name: "m2.tar.gz") {
+                      edges {
+                        node {
+                          url
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          `;
+          
+          const url = `https://api.github.com/graphql`;
+          const options = {
+            method: 'POST',
+            headers: {
+              "Authorization": `Bearer ${token}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              query: query,
+              variables: {
+                repoOwner: repositoryOwner,
+                repoName: repositoryName
+              }
+            })
+          };
+    
+          console.log("Fetching NMS artifacts...");
+           await fetch(url, options)
+            .then(res => res.json())
+            .then(data => {
+              const releases = data.data.repository.releases.edges;
+              const foundVersions = [];
+              for (const release of releases) {
+                const tagName = release.node.tagName;
+                if (versions.includes(tagName)) {
+                  console.log(`Found NMS artifact for version ${tagName}`);
+                  foundVersions.push(tagName);
+          
+                  const asset = release.node.releaseAssets.edges[0].node;
+                  const assetUrl = asset.url;
+                  const assetName = "temp/" + tagName + ".tar.gz";
+                  
+                  console.log(`Downloading NMS artifact for version ${tagName}...`);
+                  fetch(assetUrl, {
+                    headers: {
+                      "Accept": "application/octet-stream",
+                    }
+                  })
+                  .then(response => {
+                    if (!response.ok) {
+                      throw new Error(`Failed to download NMS artifact for version ${tagName}`);
+                    }
+                    console.log(`Writing NMS artifact for version ${tagName} to ${assetName}...`);
+                    const dest = fs.createWriteStream(assetName);
+          
+                    // TypeError: response.body.pipe を避ける
+                    return new Promise((resolve, reject) => {
+                      pipeline(response.body, dest, (err) => {
+                        if (err) {
+                          reject(err);
+                        } else {
+                          resolve();
+                        }
+                      });
+                    });
+                  })
+                  .then(() => {
+                    console.log(`Successfully wrote NMS artifact for version ${tagName} to ${assetName}.`);
+                  })
+                  .catch(error => {
+                    console.error(error);
+                  });
+                }
+              }
+          
+              if (foundVersions.length === versions.length) {
+                return;
+              }
+          
+              console.error("Failed to find NMS artifacts for " + versions.filter(version => !foundVersions.includes(version)).join(", "));
+            })
+            .catch(err => {
+              console.error(err);
+              process.exit(1);
+            });
+
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPOSITORY: ${{ inputs.nms-repository }}
+        VERSIONS: ${{ inputs.versions }}
+    - name: Extract, merge and deploy NMS artifacts
+      run: |
+        mkdir -p ${{ inputs.deploy-path }}
+        for file in temp/*.tar.gz; do
+          echo "Extracting $file..."
+          tar -xzf $file -C ${{ inputs.deploy-path }}
+        done
+      shell: bash
+    # Done
