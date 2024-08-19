@@ -12,7 +12,7 @@ NMS（Net Minecraft Server）アーティファクトを GitHub リリースか�
 ### 入力パラメータ
 
 - `versions` (必須): デプロイする NMS バージョンを改行で区切って指定します。
-- `github-token` (必須): NMS リポジトリにアクセスするための GitHub パーソナルアクセストークン (PAT) を指定します。
+- `access-token` (必須): NMS リポジトリにアクセスするための GitHub パーソナルアクセストークン (PAT) を指定します。
 - `nms-repository` (オプション): プリビルドされた NMS アーティファクトを含むリポジトリ。デフォルトは `TeamKUN/NMSBuilds` です。
 - `deploy-path` (オプション): NMS アーティファクトをデプロイするパス。デフォルトは `~/.m2/repository` です。
 
